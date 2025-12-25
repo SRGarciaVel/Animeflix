@@ -9,8 +9,10 @@ import {
 const DAYS_ES = { sunday: "Dom", monday: "Lun", tuesday: "Mar", wednesday: "Mié", thursday: "Jue", friday: "Vie", saturday: "Sáb" };
 const DAYS_EN = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
+// Mapeo de estados de MAL load.json a nuestro sistema
+const STATUS_MAP = { 1: 'watching', 2: 'completed', 3: 'on_hold', 4: 'dropped', 6: 'plan_to_watch' };
+
 function App() {
-  // --- ESTADOS ---
   const [search, setSearch] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [myList, setMyList] = useState([]);
@@ -23,7 +25,6 @@ function App() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // --- EFECTOS ---
   useEffect(() => { fetchMyList(); fetchSeasonCache(); }, []);
   useEffect(() => { fetchCalendar(selectedDay); }, [selectedDay]);
 
@@ -32,7 +33,6 @@ function App() {
     else setThemes({ openings: [], endings: [] });
   }, [selectedAnime]);
 
-  // Autocomplete (Jikan sigue sirviendo para esto)
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (search.length > 2) {
@@ -44,7 +44,6 @@ function App() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  // --- FUNCIONES DE DATOS ---
   const fetchMyList = async () => {
     const { data } = await supabase.from('anime_list').select('*').order('updated_at', { ascending: false });
     setMyList(data || []);
@@ -55,7 +54,6 @@ function App() {
       const recRes = await fetch(`https://api.jikan.moe/v4/anime/${id}/recommendations`);
       const recData = await recRes.json();
       setRecommendations(recData.data?.slice(0, 6) || []);
-
       const themeRes = await fetch(`https://api.jikan.moe/v4/anime/${id}/themes`);
       const themeData = await themeRes.json();
       setThemes(themeData.data || { openings: [], endings: [] });
@@ -73,53 +71,72 @@ function App() {
     setSeasonData(data || []);
   };
 
-  // --- NUEVA FUNCIÓN: SYNC CON API OFICIAL MAL ---
+  // Función para obtener imagen HD de MAL
+  const getHDImage = (url) => {
+    if (!url) return '';
+    // El hack: MyAnimeList guarda la versión HD eliminando el fragmento de redimensionado /r/ o /v/
+    return url.replace(/\/r\/\d+x\d+/, '').replace(/\/v\/\d+x\d+/, '').split('?')[0];
+  };
+
+  // --- 🚀 SYNC TOTAL CON MAL (Paginado y HD) ---
   const importFromMAL = async () => {
-    const username = prompt("Introduce tu nombre de usuario de MAL:");
+    const username = prompt("Usuario de MAL:", "_-ackerman");
     if (!username) return;
     setIsSyncing(true);
-
-    const clientID = import.meta.env.VITE_MAL_CLIENT_ID;
-    // Usamos allorigins para saltar el CORS de MyAnimeList
-    const malUrl = `https://api.myanimelist.net/v2/users/${username}/animelist?limit=100&fields=list_status,num_episodes,genres&status=watching`;
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(malUrl)}`;
+    let allData = [];
+    let offset = 0;
+    const limit = 300; // MAL suele permitir hasta 300 por carga en load.json
 
     try {
-      const res = await fetch(proxyUrl);
-      const json = await res.json();
-      // allorigins devuelve el resultado en json.contents como string
-      const data = JSON.parse(json.contents);
+      // Bucle de paginación para traer TODA la lista
+      while (true) {
+        const malUrl = `https://myanimelist.net/animelist/${username}/load.json?offset=${offset}&status=7`;
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(malUrl)}`;
+        const response = await fetch(proxyUrl);
+        const data = await response.json();
+        
+        if (!Array.isArray(data) || data.length === 0) break;
+        allData = [...allData, ...data];
+        if (data.length < limit) break;
+        offset += limit;
+      }
 
-      if (!data.data) throw new Error("No se encontraron datos. ¿Tu lista es pública?");
+      if (allData.length === 0) throw new Error("No se encontraron datos.");
 
-      const formatted = data.data.map(item => ({
-        mal_id: item.node.id,
-        title: item.node.title,
-        image_url: item.node.main_picture.large,
-        total_episodes: item.node.num_episodes || 0,
-        status: item.list_status.status,
-        episodes_watched: item.list_status.num_episodes_watched || 0,
-        score: item.list_status.score || 0,
-        genres: item.node.genres ? item.node.genres.map(g => g.name) : []
+      const formatted = allData.map(item => ({
+        mal_id: item.anime_id,
+        title: item.anime_title,
+        image_url: getHDImage(item.anime_image_path),
+        total_episodes: item.anime_num_episodes || 0,
+        status: STATUS_MAP[item.status] || 'watching',
+        episodes_watched: item.num_watched_episodes || 0,
+        score: item.score || 0,
+        genres: [] 
       }));
 
       const { error } = await supabase.from('anime_list').upsert(formatted, { onConflict: 'mal_id' });
       if (error) throw error;
-
-      alert(`¡Sincronizado! ${formatted.length} títulos añadidos/actualizados.`);
+      alert(`¡Éxito! ${formatted.length} animes sincronizados en HD.`);
       fetchMyList();
-    } catch (e) {
-      alert("Error al conectar con MAL API: " + e.message);
-    } finally {
-      setIsSyncing(false);
-    }
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setIsSyncing(false); }
   };
 
-  const panicButton = () => {
-    const available = myList.filter(a => a.status === 'watching' || a.status === 'plan_to_watch');
-    if (available.length === 0) return alert("Lista vacía.");
-    const random = available[Math.floor(Math.random() * available.length)];
-    setSelectedAnime(random);
+  const repairLibrary = async () => {
+    setIsSyncing(true);
+    const broken = myList.filter(a => !a.genres || a.genres.length === 0);
+    alert(`Analizando géneros de ${broken.length} series...`);
+    for (const anime of broken) {
+      try {
+        const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.mal_id}`);
+        const data = await res.json();
+        await supabase.from('anime_list').update({ genres: data.data.genres.map(g => g.name) }).eq('id', anime.id);
+        await new Promise(r => setTimeout(r, 1200)); 
+      } catch (e) { console.error(e); }
+    }
+    fetchMyList();
+    setIsSyncing(false);
+    alert("ADN Otaku listo.");
   };
 
   const syncSeason = async () => {
@@ -147,13 +164,12 @@ function App() {
   };
 
   const deleteAnime = async (id) => {
-    if (window.confirm("¿Eliminar?")) {
+    if (window.confirm("¿Borrar?")) {
       await supabase.from('anime_list').delete().eq('id', id);
       fetchMyList(); setSelectedAnime(null);
     }
   };
 
-  // --- COMPUTED ---
   const dnaStats = useMemo(() => {
     const map = {};
     myList.forEach(a => a.genres?.forEach(g => map[g] = (map[g] || 0) + 1));
@@ -163,59 +179,49 @@ function App() {
   const achievements = useMemo(() => {
     const total = myList.reduce((acc, curr) => acc + (curr.episodes_watched || 0), 0);
     const badges = [];
-    if (total > 500) badges.push({ name: "Leyenda", icon: <Trophy className="text-yellow-500" /> });
-    if (myList.filter(a => a.status === 'completed').length > 5) badges.push({ name: "Otaku", icon: <Tv className="text-green-400" /> });
+    if (total > 500) badges.push({ name: "Leyenda", icon: <Trophy size={16} className="text-yellow-500" /> });
+    if (myList.filter(a => a.status === 'completed').length > 5) badges.push({ name: "Otaku", icon: <Tv size={16} className="text-green-400" /> });
     return badges;
   }, [myList]);
 
-  const todayAirings = useMemo(() => {
-    const watchingIds = myList.filter(a => a.status === 'watching').map(a => a.mal_id);
-    return calendar.filter(c => watchingIds.includes(c.mal_id));
-  }, [calendar, myList]);
-
   return (
-    <div className="min-h-screen bg-netflix-black text-white font-sans selection:bg-netflix-red pb-20 no-scrollbar">
+    <div className="min-h-screen bg-netflix-black text-white font-sans selection:bg-netflix-red pb-10 no-scrollbar">
       
-      {/* NAVBAR MEJORADA (ESTILO PREMIUM) */}
-      <nav className="fixed top-0 w-full z-50 transition-all duration-300 bg-black/80 backdrop-blur-xl border-b border-white/5 px-8 md:px-16 py-5 flex items-center justify-between">
-        <div className="flex items-center gap-12">
-          <h1 className="text-4xl font-black text-netflix-red tracking-tighter cursor-pointer italic hover:scale-105 transition" onClick={() => window.scrollTo({top:0, behavior:'smooth'})}>
+      {/* NAVBAR REFINADA (MENOS GIGANTE) */}
+      <nav className="fixed top-0 w-full z-50 bg-black/80 backdrop-blur-lg border-b border-white/5 px-6 md:px-12 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-8">
+          <h1 className="text-3xl font-black text-netflix-red tracking-tighter cursor-pointer italic" onClick={() => window.scrollTo({top:0, behavior:'smooth'})}>
             ANIMEFLIX
           </h1>
-          
-          <div className="hidden lg:flex items-center gap-6">
-            <button onClick={panicButton} className="group flex items-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] hover:text-netflix-red transition">
-              <Dices size={18} className="group-hover:rotate-12 transition-transform"/> Random
+          <div className="hidden lg:flex items-center gap-4">
+            <button onClick={() => setSelectedAnime(myList[Math.floor(Math.random()*myList.length)])} className="text-[10px] font-bold uppercase tracking-widest hover:text-netflix-red transition flex items-center gap-2">
+              <Dices size={16}/> Random
             </button>
-            <button onClick={importFromMAL} className="group flex items-center gap-3 text-[11px] font-black uppercase tracking-[0.2em] text-blue-400 hover:text-blue-300 transition">
-              <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''}/> Sync MAL
+            <button onClick={importFromMAL} className="text-[10px] font-bold uppercase tracking-widest text-blue-400 hover:text-white transition flex items-center gap-2">
+              <RefreshCw size={16} className={isSyncing ? 'animate-spin' : ''}/> Sync
             </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-8">
-          <div className="flex items-center gap-4 text-gray-400 border-r border-white/10 pr-8">
-             <button onClick={syncSeason} className="hover:text-white transition" title="Actualizar temporada"><DownloadCloud size={22}/></button>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4 border-r border-white/10 pr-6">
+             <button onClick={repairLibrary} className="text-gray-400 hover:text-netflix-red transition"><RefreshCw size={20}/></button>
+             <button onClick={syncSeason} className="text-gray-400 hover:text-white transition"><DownloadCloud size={20}/></button>
           </div>
-
-          <div className="relative group">
+          <div className="relative">
             <input 
-              className="bg-white/5 border border-white/10 py-2.5 px-6 pr-12 rounded-full text-sm focus:outline-none focus:bg-white/10 focus:border-netflix-red w-64 md:w-96 transition-all" 
-              placeholder="Buscar para añadir..." 
+              className="bg-white/5 border border-white/10 py-2 px-6 pr-12 rounded-full text-xs focus:outline-none focus:border-netflix-red w-48 md:w-80 transition-all" 
+              placeholder="Buscar..." 
               value={search} 
               onChange={(e) => setSearch(e.target.value)} 
             />
-            <Search className="absolute right-5 top-3 text-gray-500" size={18} />
-            
+            <Search className="absolute right-5 top-2.5 text-gray-500" size={16} />
             {suggestions.length > 0 && (
-              <div className="absolute top-full mt-4 w-full bg-netflix-darkGray/95 border border-white/10 rounded-2xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-2xl">
+              <div className="absolute top-full mt-3 w-full bg-netflix-darkGray border border-white/10 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-xl z-50">
                 {suggestions.map(s => (
-                  <div key={s.mal_id} onClick={() => addToLibrary(s)} className="flex items-center gap-4 p-4 hover:bg-white/5 cursor-pointer border-b border-white/5 last:border-0 transition">
-                    <img src={s.images.jpg.small_image_url} className="w-10 h-14 object-cover rounded-md" />
-                    <div>
-                      <p className="text-[11px] font-black truncate uppercase tracking-tighter">{s.title}</p>
-                      <p className="text-[10px] text-gray-500 uppercase">Añadir</p>
-                    </div>
+                  <div key={s.mal_id} onClick={() => addToLibrary(s)} className="flex items-center gap-4 p-3 hover:bg-white/5 cursor-pointer border-b border-white/5">
+                    <img src={s.images.jpg.small_image_url} className="w-10 h-14 object-cover rounded-lg" />
+                    <p className="text-[10px] font-bold truncate uppercase">{s.title}</p>
                   </div>
                 ))}
               </div>
@@ -224,76 +230,57 @@ function App() {
         </div>
       </nav>
 
-      {/* RESTO DEL CONTENIDO (IGUAL QUE ANTES PERO CON ESPACIADO CORREGIDO) */}
-      <div className="pt-32 px-8 md:px-16 space-y-16">
+      <div className="pt-24 px-6 md:px-12 space-y-12">
         
-        {/* NOTIFICACIÓN DE ESTRENO */}
-        {todayAirings.length > 0 && (
-          <div className="bg-gradient-to-r from-netflix-red/20 to-transparent border-l-4 border-netflix-red p-6 rounded-r-3xl animate-in slide-in-from-left duration-700">
-            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-netflix-red mb-2">¡Novedades hoy!</p>
-            <div className="flex gap-4 overflow-x-auto no-scrollbar">
-              {todayAirings.map(a => <span key={a.mal_id} className="text-sm font-black bg-black/40 px-5 py-2 rounded-full border border-white/5 whitespace-nowrap italic uppercase">{a.title}</span>)}
-            </div>
-          </div>
-        )}
-
-        {/* DASHBOARD STATS */}
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div className="bg-white/5 p-8 rounded-[3rem] border border-white/5 shadow-2xl backdrop-blur-sm">
-            <p className="text-[11px] font-black text-netflix-red uppercase tracking-widest mb-4">ADN Otaku</p>
+        {/* DASHBOARD REFINADO */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white/5 p-6 rounded-3xl border border-white/5 shadow-xl">
+            <p className="text-[10px] font-black text-netflix-red uppercase tracking-widest mb-4">ADN Otaku</p>
             <div className="flex flex-wrap gap-2">
               {dnaStats.map(([g, c]) => (
-                <div key={g} className="bg-black/40 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter border border-white/5">{g}</div>
+                <div key={g} className="bg-black/40 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase border border-white/5">{g}</div>
               ))}
-              {dnaStats.length === 0 && <p className="text-xs text-gray-600 italic">Importa de MAL para ver tu ADN.</p>}
+              {dnaStats.length === 0 && <p className="text-[10px] italic opacity-40">Sin ADN disponible.</p>}
             </div>
           </div>
-          <div className="bg-white/5 p-8 rounded-[3rem] border border-white/5 shadow-2xl backdrop-blur-sm">
-            <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-4">Achievements</p>
-            <div className="flex gap-4">
+          <div className="bg-white/5 p-6 rounded-3xl border border-white/5 shadow-xl overflow-hidden">
+            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Logros</p>
+            <div className="flex gap-3">
               {achievements.map(a => (
-                <div key={a.name} className="bg-black/40 p-3 rounded-2xl flex flex-col items-center gap-1 min-w-[80px]">
-                  {a.icon} <span className="text-[9px] font-black uppercase tracking-tighter">{a.name}</span>
+                <div key={a.name} className="bg-black/40 p-3 rounded-2xl flex flex-col items-center gap-1 min-w-[70px] border border-white/5">
+                  {a.icon} <span className="text-[8px] font-black uppercase">{a.name}</span>
                 </div>
               ))}
             </div>
           </div>
-          <div className="bg-white/5 p-8 rounded-[3rem] border border-white/5 shadow-2xl backdrop-blur-sm flex flex-col justify-center text-center">
-            <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2">Tiempo Total</p>
-            <h4 className="text-5xl font-black italic tracking-tighter leading-none">
-              {((myList.reduce((acc, curr) => acc + (curr.episodes_watched || 0), 0) * 23) / 1440).toFixed(1)} <span className="text-xl font-light">DÍAS</span>
-            </h4>
-          </div>
+          <StatCard label="Días Totales" value={((myList.reduce((acc, curr) => acc + (curr.episodes_watched || 0), 0) * 23) / 1440).toFixed(1)} />
         </section>
 
-        {/* MI LISTA (ESTILO GRID) */}
+        {/* MI LISTA (GRID MEJORADO) */}
         <section>
-          <div className="flex justify-between items-end mb-12">
-            <h3 className="text-3xl font-black italic uppercase tracking-tighter">Tu Biblioteca</h3>
-            <div className="flex gap-2 bg-white/5 p-1.5 rounded-2xl">
-              {['all', 'watching', 'completed'].map(st => (
-                <button key={st} onClick={() => setFilterStatus(st)} className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === st ? 'bg-white text-black shadow-lg' : 'text-gray-500'}`}>
+          <div className="flex justify-between items-end mb-8">
+            <h3 className="text-2xl font-black italic uppercase tracking-tighter flex items-center gap-3 italic">Mi Biblioteca</h3>
+            <div className="flex gap-2 bg-white/5 p-1 rounded-xl border border-white/5 shadow-xl">
+              {['all', 'watching', 'completed', 'plan_to_watch'].map(st => (
+                <button key={st} onClick={() => setFilterStatus(st)} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${filterStatus === st ? 'bg-white text-black' : 'text-gray-500 hover:text-white'}`}>
                   {st.replace('_', ' ')}
                 </button>
               ))}
             </div>
           </div>
           
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-10">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-8">
             {myList.filter(a => filterStatus === 'all' || a.status === filterStatus).map(item => (
               <div key={item.id} className="group cursor-pointer" onClick={() => setSelectedAnime(item)}>
-                <div className="relative aspect-[2/3] rounded-[2.5rem] overflow-hidden shadow-2xl transition-all duration-500 group-hover:scale-105">
+                <div className="relative aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 group-hover:scale-105">
                   <img src={item.image_url} className="w-full h-full object-cover group-hover:brightness-50 transition duration-700" />
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition duration-500">
-                    <Play fill="white" size={48} />
-                  </div>
-                  <div className="absolute bottom-0 w-full h-2 bg-black/80">
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><Play fill="white" size={40}/></div>
+                  <div className="absolute bottom-0 w-full h-1.5 bg-black/80">
                     <div className="h-full bg-netflix-red shadow-[0_0_20px_#E50914]" style={{ width: `${(item.episodes_watched / (item.total_episodes || 1)) * 100}%` }}></div>
                   </div>
                 </div>
-                <div className="mt-6 space-y-1">
-                  <h4 className="font-black text-[13px] truncate uppercase tracking-tighter opacity-80 group-hover:opacity-100 transition">{item.title}</h4>
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest italic">Ep {item.episodes_watched} / {item.total_episodes || '?'}</p>
+                <div className="mt-4 text-center">
+                  <h4 className="font-bold text-[11px] truncate uppercase tracking-tighter opacity-80 group-hover:opacity-100 transition">{item.title}</h4>
                 </div>
               </div>
             ))}
@@ -301,91 +288,83 @@ function App() {
         </section>
       </div>
 
-      {/* MODAL MAESTRO */}
+      {/* MODAL REFINADO */}
       {selectedAnime && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
-          <div 
-            className="absolute inset-0 bg-cover bg-center opacity-40 blur-[100px] transition-all duration-1000 scale-110"
-            style={{ backgroundImage: `url(${selectedAnime.image_url})` }}
-          ></div>
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setSelectedAnime(null)}></div>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
+          <div className="absolute inset-0 bg-cover bg-center opacity-30 blur-[80px] scale-110" style={{ backgroundImage: `url(${selectedAnime.image_url})` }}></div>
+          <div className="absolute inset-0 bg-black/80" onClick={() => setSelectedAnime(null)}></div>
           
-          <div className="bg-netflix-darkGray/90 w-full max-w-6xl rounded-[4rem] overflow-hidden shadow-2xl relative border border-white/10 flex flex-col md:flex-row max-h-[90vh] z-10 no-scrollbar animate-in zoom-in duration-300">
-            <button onClick={() => setSelectedAnime(null)} className="absolute top-10 right-10 z-10 bg-black/50 p-4 rounded-full hover:bg-white hover:text-black transition shadow-2xl active:scale-90"><X size={24}/></button>
+          <div className="bg-netflix-darkGray w-full max-w-5xl rounded-[2.5rem] overflow-hidden shadow-2xl relative border border-white/10 flex flex-col md:flex-row max-h-[90vh] z-10 no-scrollbar">
+            <button onClick={() => setSelectedAnime(null)} className="absolute top-8 right-8 z-10 bg-black/50 p-3 rounded-full hover:bg-white hover:text-black transition"><X size={20}/></button>
             
-            <div className="w-full md:w-[450px] p-12 flex flex-col items-center overflow-y-auto no-scrollbar border-r border-white/5 bg-black/20">
-              <img src={selectedAnime.image_url} className="w-full rounded-[3.5rem] shadow-[0_40px_80px_rgba(0,0,0,0.7)] mb-12 transform hover:scale-105 transition duration-700" />
-              
-              <div className="w-full space-y-6">
-                <button onClick={() => window.open(`https://www.crunchyroll.com/search?q=${selectedAnime.title}`, '_blank')} className="w-full bg-[#f47521] py-5 rounded-[2.5rem] font-black text-[12px] flex items-center justify-center gap-3 hover:scale-105 transition shadow-lg shadow-[#f47521]/20 uppercase tracking-widest">
-                   <ExternalLink size={20}/> Crunchyroll
+            <div className="w-full md:w-[350px] p-10 flex flex-col items-center overflow-y-auto no-scrollbar border-r border-white/5 bg-black/20">
+              <img src={selectedAnime.image_url} className="w-56 rounded-3xl shadow-2xl mb-10 transform hover:scale-105 transition duration-700" />
+              <div className="w-full space-y-4">
+                <button onClick={() => window.open(`https://www.crunchyroll.com/search?q=${selectedAnime.title}`, '_blank')} className="w-full bg-[#f47521] py-4 rounded-2xl font-black text-[10px] flex items-center justify-center gap-3 hover:scale-105 transition shadow-lg uppercase tracking-widest">
+                   <ExternalLink size={18}/> Crunchyroll
                 </button>
-                
-                <div className="bg-black/40 p-8 rounded-[3rem] border border-white/5 space-y-6">
-                  <p className="text-[11px] font-black text-gray-500 uppercase tracking-[0.4em] text-center italic">Temas Musicales</p>
+                <div className="bg-black/40 p-6 rounded-3xl border border-white/5 space-y-4">
+                  <p className="text-[10px] font-black text-gray-500 uppercase text-center italic">OST & Themes</p>
                   {themes.openings?.slice(0, 1).map((op, i) => (
-                    <button key={i} onClick={() => window.open(`https://www.youtube.com/results?search_query=${selectedAnime.title} opening`, '_blank')} className="w-full bg-black/60 p-5 rounded-2xl text-[10px] font-bold flex items-center gap-4 hover:text-netflix-red transition-all border border-white/5">
-                      <Music size={18} className="text-netflix-red"/> {op.split('"')[1] || "Ver Opening"}
+                    <button key={i} onClick={() => window.open(`https://www.youtube.com/results?search_query=${selectedAnime.title} opening`, '_blank')} className="w-full bg-black/60 p-4 rounded-xl text-[9px] font-bold flex items-center gap-3 hover:text-netflix-red transition border border-white/5">
+                      <Music size={16} className="text-netflix-red"/> Ver OP
                     </button>
                   ))}
-                  <div className="bg-black/60 p-5 rounded-2xl flex items-center justify-between border border-white/5">
-                    <span className="text-[10px] font-black uppercase text-gray-500 flex items-center gap-3"><RotateCcw size={18}/> Rewatches</span>
-                    <div className="flex items-center gap-5">
-                      <button onClick={() => updateProgress(selectedAnime.id, { rewatch_count: (selectedAnime.rewatch_count || 0) + 1 })} className="font-black text-netflix-red text-3xl hover:scale-125 transition">+</button>
-                      <span className="text-lg font-black italic">{selectedAnime.rewatch_count || 0}</span>
+                  <div className="flex items-center justify-between border-t border-white/5 pt-4">
+                    <span className="text-[9px] font-black uppercase text-gray-500 italic">Rewatches</span>
+                    <div className="flex items-center gap-4">
+                      <button onClick={() => updateProgress(selectedAnime.id, { rewatch_count: (selectedAnime.rewatch_count || 0) + 1 })} className="font-black text-netflix-red text-2xl">+</button>
+                      <span className="text-sm font-black italic">{selectedAnime.rewatch_count || 0}</span>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="flex-1 p-12 md:p-20 overflow-y-auto no-scrollbar space-y-16">
+            <div className="flex-1 p-12 md:p-16 overflow-y-auto no-scrollbar space-y-12">
               <header>
-                <div className="flex items-center gap-4 mb-6">
-                   <span className="bg-netflix-red text-[10px] font-black px-4 py-1.5 rounded-full uppercase italic tracking-widest">Original Animeflix</span>
-                </div>
-                <h2 className="text-7xl font-black italic uppercase leading-none mb-10 tracking-tighter">{selectedAnime.title}</h2>
-                <div className="flex flex-wrap gap-3">
+                <h2 className="text-5xl font-black italic uppercase leading-none mb-8 tracking-tighter">{selectedAnime.title}</h2>
+                <div className="flex flex-wrap gap-2">
                   {selectedAnime.genres?.map(g => (
-                    <span key={g} className="text-[11px] font-black uppercase bg-white/5 text-gray-400 px-5 py-2 rounded-full border border-white/10">{g}</span>
+                    <span key={g} className="text-[10px] font-black uppercase bg-white/5 text-gray-400 px-4 py-1.5 rounded-full border border-white/10">{g}</span>
                   ))}
                 </div>
               </header>
 
-              <div className="bg-black/40 p-12 rounded-[4rem] border border-white/5 shadow-2xl">
-                <div className="flex justify-between items-end mb-12">
+              <div className="bg-black/40 p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
+                <div className="flex justify-between items-end mb-10">
                   <div>
-                    <p className="text-[11px] font-black text-netflix-red uppercase italic mb-3 tracking-widest">Estado Actual</p>
-                    <h3 className="text-7xl font-black italic tracking-tighter leading-none">
+                    <p className="text-[10px] font-black text-netflix-red uppercase italic mb-2 tracking-widest">Progreso</p>
+                    <h3 className="text-6xl font-black italic tracking-tighter">
                       EP {selectedAnime.episodes_watched} 
-                      <span className="text-gray-700 text-3xl font-light ml-4 italic"> 
-                        / {selectedAnime.total_episodes === 0 ? 'ON AIR' : selectedAnime.total_episodes}
+                      <span className="text-gray-700 text-2xl font-light ml-3 italic"> 
+                        / {selectedAnime.total_episodes === 0 ? 'EMISIÓN' : selectedAnime.total_episodes}
                       </span>
                     </h3>
                   </div>
-                  <div className="flex items-center gap-3 bg-black/60 px-6 py-4 rounded-3xl border border-white/10 shadow-inner transition hover:border-yellow-500/50">
-                    <Star size={24} className="text-yellow-500 fill-yellow-500"/>
-                    <input type="number" max="10" value={selectedAnime.score} onChange={(e) => updateProgress(selectedAnime.id, { score: parseInt(e.target.value) })} className="bg-transparent w-12 font-black text-3xl text-center outline-none" />
+                  <div className="flex items-center gap-3 bg-black/60 px-5 py-3 rounded-2xl border border-white/10">
+                    <Star size={20} className="text-yellow-500 fill-yellow-500"/>
+                    <input type="number" max="10" value={selectedAnime.score} onChange={(e) => updateProgress(selectedAnime.id, { score: parseInt(e.target.value) })} className="bg-transparent w-10 font-black text-2xl text-center outline-none" />
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-8">
-                  <button onClick={() => updateProgress(selectedAnime.id, { episodes_watched: selectedAnime.episodes_watched + 1 })} className="bg-white text-black py-6 rounded-[2.5rem] font-black text-xs hover:bg-gray-200 hover:scale-105 transition-all shadow-xl uppercase tracking-widest">+1 Episodio</button>
-                  <button onClick={() => updateProgress(selectedAnime.id, { episodes_watched: selectedAnime.episodes_watched + 12 })} className="bg-gray-800 text-white py-6 rounded-[2.5rem] font-black text-xs hover:bg-gray-700 hover:scale-105 transition-all shadow-xl uppercase tracking-widest">+1 Temporada</button>
+                <div className="grid grid-cols-2 gap-4">
+                  <button onClick={() => updateProgress(selectedAnime.id, { episodes_watched: selectedAnime.episodes_watched + 1 })} className="bg-white text-black py-4 rounded-2xl font-black text-xs hover:bg-gray-200 transition">+1 EP</button>
+                  <button onClick={() => updateProgress(selectedAnime.id, { episodes_watched: selectedAnime.episodes_watched + 12 })} className="bg-gray-800 text-white py-4 rounded-2xl font-black text-xs hover:bg-gray-700 transition">+1 TEMP</button>
                 </div>
                 
-                <div className="relative mt-8 group">
-                  <Hash className="absolute left-8 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-netflix-red transition" size={24}/>
-                  <input type="number" placeholder="Ir a episodio exacto..." className="w-full bg-white/5 border border-white/10 rounded-[2.5rem] py-6 text-center font-black text-xl outline-none focus:border-netflix-red transition-all shadow-inner" onKeyDown={(e) => { if (e.key === 'Enter') { updateProgress(selectedAnime.id, { episodes_watched: parseInt(e.target.value) }); e.target.value = ''; }}} />
+                <div className="relative mt-6 group">
+                  <Hash className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-600 group-focus-within:text-netflix-red transition" size={20}/>
+                  <input type="number" placeholder="Capítulo exacto..." className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 text-center font-black text-xl outline-none focus:border-netflix-red transition shadow-inner" onKeyDown={(e) => { if (e.key === 'Enter') { updateProgress(selectedAnime.id, { episodes_watched: parseInt(e.target.value) }); e.target.value = ''; }}} />
                 </div>
               </div>
 
-              <div className="bg-black/40 p-12 rounded-[3.5rem] border border-white/5 shadow-2xl flex flex-col">
-                <p className="text-[11px] font-black text-gray-500 uppercase mb-8 flex items-center gap-4 tracking-[0.4em] italic"><Edit3 size={20}/> Diario Personal</p>
-                <textarea className="w-full flex-1 bg-transparent border-none text-base font-medium focus:ring-0 resize-none no-scrollbar h-48 leading-relaxed" placeholder="Anota tus impresiones o teorías sobre este anime..." value={selectedAnime.notes || ''} onChange={(e) => updateProgress(selectedAnime.id, { notes: e.target.value })} />
+              <div className="bg-black/40 p-10 rounded-3xl border border-white/5 h-48 flex flex-col">
+                <p className="text-[10px] font-black text-gray-500 uppercase mb-4 flex items-center gap-3 tracking-[0.3em]"><Edit3 size={18}/> Notas</p>
+                <textarea className="w-full flex-1 bg-transparent border-none text-sm font-medium focus:ring-0 resize-none no-scrollbar italic" placeholder="Pensamientos..." value={selectedAnime.notes || ''} onChange={(e) => updateProgress(selectedAnime.id, { notes: e.target.value })} />
               </div>
               
-              <button onClick={() => deleteAnime(selectedAnime.id)} className="w-full text-[11px] font-black text-red-500/10 hover:text-red-500 transition-all uppercase tracking-[0.5em] py-16 italic">Eliminar del Catálogo</button>
+              <button onClick={() => deleteAnime(selectedAnime.id)} className="w-full text-[10px] font-black text-red-500/10 hover:text-red-500 transition uppercase tracking-widest py-10">Remover Permanentemente</button>
             </div>
           </div>
         </div>
@@ -396,9 +375,9 @@ function App() {
 
 function StatCard({ label, value }) {
   return (
-    <div className="bg-white/5 p-8 rounded-[3.5rem] border border-white/5 shadow-2xl backdrop-blur-sm flex flex-col justify-center transition hover:border-white/10 group">
-      <p className="text-[11px] font-black text-gray-500 uppercase tracking-[0.3em] mb-3 group-hover:text-netflix-red transition">{label}</p>
-      <h4 className="text-6xl font-black text-white italic leading-none tracking-tighter">{value}</h4>
+    <div className="bg-white/5 p-8 rounded-3xl border border-white/5 shadow-xl backdrop-blur-md flex flex-col justify-center transition hover:border-white/10 group text-center">
+      <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 group-hover:text-netflix-red transition">{label}</p>
+      <h4 className="text-5xl font-black text-white italic leading-none tracking-tighter">{value}</h4>
     </div>
   );
 }
