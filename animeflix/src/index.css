@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos globales para un scrollbar "Netflix Style" */
+::-webkit-scrollbar {
+  width: 8px; /* Más fina */
+}
+
+::-webkit-scrollbar-track {
+  background: #141414; /* Fondo negro */
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333; /* Gris oscuro */
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444; /* Un poco más claro al pasar el ratón */
+}
+
+/* Clase para ocultar scrollbar pero permitir el movimiento */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+body {
+  margin: 0;
+  background-color: #141414;
+  color: white;
+  overflow-x: hidden;
+}
