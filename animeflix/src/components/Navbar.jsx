@@ -56,6 +56,12 @@ export function Navbar({ onSearchSelect, onRandomClick, syncSeason }) {
             Estadísticas
           </Link>
         </div>
+        <Link 
+            to="/tier-list" 
+            className={`text-[11px] font-black uppercase tracking-widest transition-colors ${location.pathname === '/tier-list' ? 'text-white' : 'text-gray-500 hover:text-white'}`}
+        >
+            Tier List
+        </Link>
 
         {/* BOTONES DE ACCIÓN RÁPIDA */}
         <div className="hidden lg:flex items-center gap-4 ml-4">

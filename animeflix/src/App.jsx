@@ -6,6 +6,7 @@ import { Navbar } from './components/Navbar';
 import { CinemaModal } from './components/CinemaModal';
 import { Home } from './pages/Home';
 import { Stats } from './pages/Stats';
+import { TierList } from './pages/TierList'; 
 
 function App() {
   const { myList, isLoading, syncSeason } = useAnimeLibrary();
@@ -34,6 +35,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Home setSelectedAnime={setSelectedAnime} calendar={calendar} />} />
           <Route path="/stats" element={<Stats />} />
+          <Route path="/tier-list" element={<TierList />} />
         </Routes>
       </div>
 
