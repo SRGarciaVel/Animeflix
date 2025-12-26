@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Search, Dices, RefreshCw, DownloadCloud } from 'lucide-react';
+import { Search, Dices, RefreshCw, DownloadCloud, Sparkles } from 'lucide-react';
 import { useAnimeLibrary } from '../hooks/useAnimeLibrary';
 
 export function Navbar({ onSearchSelect, onRandomClick, syncSeason }) {
@@ -61,6 +61,12 @@ export function Navbar({ onSearchSelect, onRandomClick, syncSeason }) {
             className={`text-[11px] font-black uppercase tracking-widest transition-colors ${location.pathname === '/tier-list' ? 'text-white' : 'text-gray-500 hover:text-white'}`}
         >
             Tier List
+        </Link>
+        <Link 
+          to="/wrapped" 
+          className={`text-[11px] font-black uppercase tracking-widest transition-colors flex items-center gap-2 ${location.pathname === '/wrapped' ? 'text-netflix-red' : 'text-gray-500 hover:text-white'}`}
+        >
+          <Sparkles size={14}/> Wrapped 2025
         </Link>
 
         {/* BOTONES DE ACCIÓN RÁPIDA */}

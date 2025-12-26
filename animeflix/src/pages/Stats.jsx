@@ -1,73 +1,181 @@
 import React, { useMemo } from 'react';
 import { useAnimeLibrary } from '../hooks/useAnimeLibrary';
-import { Sparkles, Trophy, Tv, Clock } from 'lucide-react';
+import { ADNChart } from '../components/ADNChart';
+import { Sparkles, Trophy, Clock, History, Gauge, TrendingDown, TrendingUp, Tv, Library } from 'lucide-react';
 
 export function Stats() {
-  const { myList } = useAnimeLibrary();
+  const { myList, history } = useAnimeLibrary();
 
-  const dnaStats = useMemo(() => {
-    const map = {};
-    myList.forEach(a => a.genres?.forEach(g => map[g] = (map[g] || 0) + 1));
-    return Object.entries(map).sort((a,b) => b[1]-a[1]).slice(0, 10);
+  // 1.1 COMPARADOR DE CRÍTICA
+  const criticAnalysis = useMemo(() => {
+    const ratedAnimes = myList.filter(a => a.score > 0 && a.mal_score > 0);
+    if (ratedAnimes.length === 0) return null;
+    const myAvg = ratedAnimes.reduce((acc, curr) => acc + curr.score, 0) / ratedAnimes.length;
+    const malAvg = ratedAnimes.reduce((acc, curr) => acc + curr.mal_score, 0) / ratedAnimes.length;
+    const diff = myAvg - malAvg;
+    return {
+      myAvg: myAvg.toFixed(2),
+      malAvg: malAvg.toFixed(2),
+      diff: diff.toFixed(2),
+      isStrict: diff < 0
+    };
   }, [myList]);
 
-  const achievements = useMemo(() => {
-    const total = myList.reduce((acc, curr) => acc + (curr.episodes_watched || 0), 0);
-    const badges = [];
-    if (total > 500) badges.push({ name: "Leyenda", desc: "Más de 500 episodios vistos", icon: <Trophy className="text-yellow-500" size={40}/> });
-    if (myList.filter(a => a.status === 'completed').length > 10) badges.push({ name: "Maestro", desc: "Más de 10 series completadas", icon: <Tv className="text-green-400" size={40}/> });
-    return badges;
+  // 1.2 ANÁLISIS DE ESTUDIOS (STUDIO DOMINATION)
+  const studioStats = useMemo(() => {
+    const map = {};
+    myList.forEach(a => {
+      const studio = a.studio || 'Desconocido';
+      if (studio !== 'Desconocido') {
+        map[studio] = (map[studio] || 0) + 1;
+      }
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [myList]);
+
+  // 1.3 ADN OTALU (Top Géneros para el Radar)
+  const dnaStats = useMemo(() => {
+    const map = {};
+    myList.forEach(a => a.genres?.forEach(g => {
+        const name = typeof g === 'object' ? g.name : g;
+        map[name] = (map[name] || 0) + 1;
+    }));
+    return Object.entries(map).sort((a,b) => b[1]-a[1]).slice(0, 6);
   }, [myList]);
 
   const totalTime = ((myList.reduce((acc, curr) => acc + (curr.episodes_watched || 0), 0) * 23) / 1440).toFixed(1);
 
   return (
-    <div className="space-y-12 animate-in slide-in-from-bottom-10 duration-700">
-      <h2 className="text-5xl font-black italic uppercase tracking-tighter text-netflix-red">Tu Perfil Otaku</h2>
+    <div className="space-y-12 pb-20 animate-in fade-in duration-700">
+      <h2 className="text-5xl font-black italic uppercase tracking-tighter text-white">
+        Intelligence <span className="text-netflix-red underline decoration-4">Analysis</span>
+      </h2>
       
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-        {/* ADN OTALU DETALLADO */}
-        <div className="bg-white/5 p-10 rounded-[3rem] border border-white/5">
-          <p className="text-sm font-black text-netflix-red uppercase tracking-widest mb-8 flex items-center gap-3"><Sparkles/> Análisis de ADN (Top 10 Géneros)</p>
-          <div className="space-y-6">
-            {dnaStats.map(([genre, count]) => (
-              <div key={genre} className="space-y-2">
-                <div className="flex justify-between text-xs font-bold uppercase tracking-tighter">
-                  <span>{genre}</span>
-                  <span className="opacity-50">{count} series</span>
-                </div>
-                <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-netflix-red" style={{ width: `${(count / dnaStats[0][1]) * 100}%` }}></div>
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* FILA 1: ADN Y CRÍTICA */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* RADAR DE ADN */}
+        <div className="bg-white/5 p-8 rounded-[3rem] border border-white/5 shadow-2xl flex flex-col items-center backdrop-blur-sm relative group overflow-hidden">
+          <p className="text-xs font-black text-netflix-red uppercase tracking-[0.3em] mb-4 flex items-center gap-2 italic">
+            <Sparkles size={16}/> Gráfico de ADN
+          </p>
+          {dnaStats.length > 2 ? (
+            <ADNChart dnaStats={dnaStats} />
+          ) : (
+            <div className="h-[300px] flex items-center justify-center text-gray-600 italic text-xs text-center px-10">
+                Añade más géneros y pulsa REPARAR para ver el radar.
+            </div>
+          )}
         </div>
 
-        <div className="space-y-8">
-          {/* TIEMPO TOTAL */}
-          <div className="bg-white/5 p-10 rounded-[3rem] border border-white/5 text-center">
-            <Clock className="mx-auto mb-4 text-gray-500" size={48}/>
-            <p className="text-sm font-black uppercase tracking-widest text-gray-400">Tiempo invertido en anime</p>
-            <h4 className="text-8xl font-black italic">{totalTime} <span className="text-2xl font-light opacity-30">DÍAS</span></h4>
-          </div>
-
-          {/* LOGROS */}
-          <div className="bg-white/5 p-10 rounded-[3rem] border border-white/5">
-            <p className="text-sm font-black text-gray-400 uppercase tracking-widest mb-8 flex items-center gap-3"><Trophy/> Medallas de Honor</p>
-            <div className="grid grid-cols-2 gap-6">
-              {achievements.map(a => (
-                <div key={a.name} className="bg-black/40 p-6 rounded-3xl border border-white/5 flex flex-col items-center text-center gap-3 transition hover:scale-105">
-                  {a.icon}
-                  <div>
-                    <p className="text-xs font-black uppercase">{a.name}</p>
-                    <p className="text-[10px] text-gray-500">{a.desc}</p>
+        {/* PERFIL DE CRÍTICO */}
+        <div className="bg-white/5 p-8 rounded-[3rem] border border-white/5 shadow-2xl flex flex-col justify-center overflow-hidden relative group backdrop-blur-sm">
+           <div className="relative z-10">
+              <p className="text-xs font-black text-gray-500 uppercase tracking-[0.3em] mb-8 flex items-center gap-2 italic">
+                <Gauge size={16} className="text-netflix-red"/> Perfil de Crítico
+              </p>
+              {criticAnalysis ? (
+                <div className="space-y-8">
+                  <div className="flex justify-between items-end px-4">
+                    <div>
+                      <h4 className="text-6xl font-black italic tracking-tighter">{criticAnalysis.myAvg}</h4>
+                      <p className="text-[10px] font-bold text-netflix-red uppercase tracking-widest leading-none">Tu Promedio</p>
+                    </div>
+                    <div className="text-right">
+                      <h4 className="text-4xl font-bold opacity-30 italic">{criticAnalysis.malAvg}</h4>
+                      <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest leading-none">Promedio Global</p>
+                    </div>
+                  </div>
+                  <div className={`p-6 rounded-3xl flex items-center gap-4 mx-4 ${criticAnalysis.isStrict ? 'bg-blue-500/10 border border-blue-500/20' : 'bg-green-500/10 border border-green-500/20'}`}>
+                    {criticAnalysis.isStrict ? <TrendingDown className="text-blue-500" /> : <TrendingUp className="text-green-500" />}
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-widest">{criticAnalysis.isStrict ? 'Crítico Exigente' : 'Crítico Generoso'}</p>
+                      <p className="text-[10px] text-gray-500 font-medium mt-1">
+                        Tus notas son un {Math.abs(criticAnalysis.diff)} pts {criticAnalysis.isStrict ? 'menores' : 'mayores'} que MAL.
+                      </p>
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
+              ) : (
+                <p className="text-xs text-gray-600 italic py-10 text-center px-10">Puntúa algunas series y repara metadatos para activar este módulo.</p>
+              )}
+           </div>
+           <Gauge className="absolute -right-8 -bottom-8 text-white/5 group-hover:scale-110 transition-transform duration-700" size={220}/>
+        </div>
+      </div>
+
+      {/* FILA 2: ESTUDIOS Y ACTIVIDAD */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* ESTUDIOS DOMINANTES */}
+        <div className="bg-white/5 p-8 rounded-[3rem] border border-white/5 shadow-2xl flex flex-col backdrop-blur-sm relative group overflow-hidden">
+          <p className="text-xs font-black text-gray-500 uppercase tracking-[0.3em] mb-8 flex items-center gap-2 italic">
+            <Library size={16} className="text-netflix-red"/> Studio Domination
+          </p>
+          <div className="space-y-6 relative z-10">
+            {studioStats.length > 0 ? studioStats.map(([name, count], index) => (
+              <div key={name} className="space-y-2">
+                <div className="flex justify-between items-end text-xs font-black uppercase tracking-tighter">
+                  <span className={index === 0 ? 'text-white' : 'text-gray-500'}>{index === 0 && '👑 '}{name}</span>
+                  <span className="text-[10px] opacity-40">{count} Series</span>
+                </div>
+                <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div className={`h-full transition-all duration-1000 ${index === 0 ? 'bg-netflix-red shadow-[0_0_10px_#E50914]' : 'bg-white/20'}`} style={{ width: `${(count / studioStats[0][1]) * 100}%` }}></div>
+                </div>
+              </div>
+            )) : (
+              <p className="text-xs text-gray-600 italic text-center py-10">Sincroniza metadatos para analizar estudios.</p>
+            )}
+          </div>
+          <Library className="absolute -right-10 -bottom-10 text-white/5 group-hover:scale-110 transition-transform duration-700" size={200}/>
+        </div>
+
+        {/* LÍNEA DE TIEMPO (HISTORIAL) */}
+        <div className="lg:col-span-2 bg-white/5 p-8 rounded-[3rem] border border-white/5 shadow-2xl flex flex-col backdrop-blur-sm">
+          <p className="text-xs font-black text-gray-400 uppercase tracking-[0.3em] mb-8 flex items-center gap-3 italic">
+            <History size={18}/> Actividad Reciente (Timeline)
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6 overflow-y-auto no-scrollbar max-h-[400px] pr-2">
+            {history.length > 0 ? history.map((entry) => (
+              <div key={entry.id} className="relative pl-6 border-l border-white/10 py-1 group/item">
+                <div className="absolute -left-1.5 top-2 w-3 h-3 bg-netflix-red rounded-full shadow-[0_0_10px_#E50914] group-hover/item:scale-125 transition-transform"></div>
+                <p className="text-[11px] font-black text-white uppercase tracking-tighter leading-none mb-1 truncate">{entry.anime_title}</p>
+                <p className="text-[10px] text-gray-500 font-bold uppercase italic">
+                  Visto episodio {entry.episode_number} 
+                  <span className="ml-2 opacity-30">• {new Date(entry.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                </p>
+              </div>
+            )) : (
+              <div className="text-center py-20 opacity-20 italic text-xs col-span-2">Sin actividad registrada.</div>
+            )}
           </div>
         </div>
+      </div>
+
+      {/* BANNER FINAL: TIEMPO Y COMPLETADOS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+           <div className="bg-white/5 p-10 rounded-[3.5rem] border border-white/5 text-center flex items-center justify-around shadow-2xl backdrop-blur-sm">
+              <div className="space-y-2">
+                 <Clock className="mx-auto text-gray-500" size={32}/>
+                 <p className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Life Time</p>
+                 <h4 className="text-6xl font-black italic tracking-tighter">{totalTime} <span className="text-lg font-light opacity-30 italic">DÍAS</span></h4>
+              </div>
+              <div className="w-px h-20 bg-white/10"></div>
+              <div className="space-y-2">
+                 <Tv className="mx-auto text-gray-500" size={32}/>
+                 <p className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Capítulos</p>
+                 <h4 className="text-6xl font-black italic tracking-tighter">{myList.reduce((acc, curr) => acc + (curr.episodes_watched || 0), 0)}</h4>
+              </div>
+           </div>
+           
+           <div className="bg-netflix-red/10 p-10 rounded-[3.5rem] border border-netflix-red/20 flex items-center justify-between shadow-2xl group overflow-hidden relative backdrop-blur-sm">
+              <Trophy className="absolute -right-4 -bottom-4 text-netflix-red/5 group-hover:scale-110 group-hover:rotate-12 transition-all duration-700" size={180}/>
+              <div className="relative z-10">
+                 <p className="text-xs font-black uppercase tracking-widest text-netflix-red mb-2 italic">Master Track</p>
+                 <h4 className="text-5xl font-black uppercase italic leading-none">
+                    {myList.filter(a => a.status === 'completed').length} <br/> 
+                    <span className="text-gray-400 text-xl font-medium tracking-tighter italic">Obras Finalizadas</span>
+                 </h4>
+              </div>
+           </div>
       </div>
     </div>
   );

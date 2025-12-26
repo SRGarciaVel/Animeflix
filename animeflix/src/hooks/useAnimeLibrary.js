@@ -9,7 +9,7 @@ const STATUS_MAP = { 1: 'watching', 2: 'completed', 3: 'on_hold', 4: 'dropped', 
 export function useAnimeLibrary() {
   const queryClient = useQueryClient();
 
-  // 1. Obtener mi lista personal
+  // 1. OBTENER LISTA PERSONAL
   const { data: myList = [], isLoading } = useQuery({
     queryKey: ['animeList'],
     queryFn: async () => {
@@ -18,7 +18,7 @@ export function useAnimeLibrary() {
     }
   });
 
-  // 2. Obtener caché de temporada
+  // 2. OBTENER CACHÉ DE TEMPORADA
   const { data: seasonData = [] } = useQuery({
     queryKey: ['seasonCache'],
     queryFn: async () => {
@@ -27,7 +27,16 @@ export function useAnimeLibrary() {
     }
   });
 
-  // Mutación para Guardar/Actualizar (Limpiando datos para Supabase)
+  // 3. OBTENER HISTORIAL DE ACTIVIDAD
+  const { data: history = [] } = useQuery({
+    queryKey: ['animeHistory'],
+    queryFn: async () => {
+      const { data } = await supabase.from('anime_history').select('*').order('created_at', { ascending: false }).limit(30);
+      return data || [];
+    }
+  });
+
+  // 4. MUTACIÓN UPSERT (GUARDAR/ACTUALIZAR)
   const upsertMutation = useMutation({
     mutationFn: async (animeData) => {
       const cleanData = {
@@ -40,81 +49,62 @@ export function useAnimeLibrary() {
         episodes_watched: animeData.episodes_watched || 0,
         score: animeData.score || 0,
         genres: animeData.genres || [],
+        mal_score: animeData.mal_score || 0,
+        studio: animeData.studio || 'Desconocido',
         notes: animeData.notes || '',
         rewatch_count: animeData.rewatch_count || 0,
         tier: animeData.tier || 'Unranked'
       };
 
+      // REGISTRO EN HISTORIAL: Si el contador de episodios subió
+      const currentInList = myList.find(a => a.mal_id === animeData.mal_id);
+      if (currentInList && animeData.episodes_watched > currentInList.episodes_watched) {
+        await supabase.from('anime_history').insert([{
+          anime_id: currentInList.id,
+          anime_title: animeData.title,
+          episode_number: animeData.episodes_watched
+        }]);
+      }
+
       const { error } = await supabase.from('anime_list').upsert(cleanData, { onConflict: 'mal_id' });
       if (error) throw error;
     },
-    onSuccess: () => queryClient.invalidateQueries(['animeList'])
+    onSuccess: () => {
+      queryClient.invalidateQueries(['animeList']);
+      queryClient.invalidateQueries(['animeHistory']);
+    }
   });
 
-  // --- NUEVA FUNCIÓN: AÑADIR A LA BIBLIOTECA CON LÓGICA INTELIGENTE ---
+  // 5. AÑADIR CON DETECTOR DE FRANQUICIAS
   const addToLibrary = async (anime) => {
-    // El objeto puede venir de Jikan (Search) o de SeasonCache
     const entry = anime.entry || anime;
+    if (myList.some(item => item.mal_id === entry.mal_id)) return toast.error("Ya está en tu lista");
     
-    // 1. Evitar duplicados
-    if (myList.some(item => item.mal_id === entry.mal_id)) {
-      return toast.error("Este anime ya está en tu lista");
-    }
-
-    // 2. LÓGICA DE SECUELAS: Detectar si es parte de una franquicia que ya viste
     let finalStatus = 'plan_to_watch';
-    
-    // Tomamos las primeras dos palabras para buscar coincidencias (ej: "Jujutsu Kaisen")
     const titleKeywords = entry.title.split(' ').slice(0, 2).join(' ').toLowerCase();
-    
     const hasFinishedPrevious = myList.some(m => 
-      m.title.toLowerCase().includes(titleKeywords) && 
-      (m.status === 'completed' || m.status === 'on_hold')
+      m.title.toLowerCase().includes(titleKeywords) && (m.status === 'completed' || m.status === 'on_hold')
     );
+    if (hasFinishedPrevious) finalStatus = 'on_hold';
 
-    if (hasFinishedPrevious) {
-      finalStatus = 'on_hold';
-      toast.info(`¡Franquicia detectada! Agregado a 'En Espera' por tu progreso anterior.`);
-    }
-
-    // 3. Normalizar géneros (siempre como array de strings)
-    const genres = anime.genres ? 
-      (Array.isArray(anime.genres) ? 
-        anime.genres.map(g => typeof g === 'object' ? g.name : g) : 
-        []) : 
-      [];
-
-    // 4. Preparar imagen HD
-    const imageUrl = entry.images?.jpg?.large_image_url || entry.image_url;
-
-    // 5. Ejecutar la inserción
+    const genres = anime.genres ? (Array.isArray(anime.genres) ? anime.genres.map(g => typeof g === 'object' ? g.name : g) : []) : [];
+    
     upsertMutation.mutate({
       mal_id: entry.mal_id,
       title: entry.title,
-      image_url: imageUrl,
+      image_url: entry.images?.jpg?.large_image_url || entry.image_url,
       total_episodes: anime.episodes || 0,
       status: finalStatus,
       episodes_watched: 0,
       score: 0,
-      genres: genres
+      genres
     });
   };
 
-  // Mutación para Borrar
-  const deleteMutation = useMutation({
-    mutationFn: async (id) => {
-      const { error } = await supabase.from('anime_list').delete().eq('id', id);
-      if (error) throw error;
-      toast.success("Eliminado del catálogo");
-    },
-    onSuccess: () => queryClient.invalidateQueries(['animeList'])
-  });
-
-  // Funciones de conveniencia
+  // 6. SYNC MAL HD TOTAL
   const importFromMAL = async () => {
-    const username = prompt("Usuario de MAL:", "_-ackerman");
+    const username = prompt("Usuario de MyAnimeList:", "_-ackerman");
     if (!username) return;
-    
     const promise = async () => {
       let allData = [];
       let offset = 0;
@@ -142,33 +132,34 @@ export function useAnimeLibrary() {
       queryClient.invalidateQueries(['animeList']);
       return formatted.length;
     };
-
-    toast.promise(promise(), {
-      loading: 'Sincronizando con MyAnimeList...',
-      success: (len) => `Sincronizados ${len} animes con éxito`,
-      error: 'Error al conectar con MAL'
-    });
+    toast.promise(promise(), { loading: 'Sincronizando...', success: (len) => `Sincronizados ${len} animes`, error: 'Error de conexión' });
   };
 
+  // 7. REPARAR METADATOS (ADN, SCORE MAL, ESTUDIOS)
   const repairADN = async () => {
-    const broken = myList.filter(a => !a.genres || a.genres.length === 0);
-    if (broken.length === 0) return toast.info("Tu ADN ya está actualizado");
+    const broken = myList.filter(a => !a.genres || a.genres.length === 0 || a.studio === 'Desconocido');
+    if (broken.length === 0) return toast.info("Tu ADN ya está completo");
 
-    toast.info(`Reparando ADN de ${broken.length} series...`);
+    toast.info(`Analizando ${broken.length} series...`);
     for (const anime of broken) {
       await queue.add(async () => {
         try {
           const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.mal_id}`);
           const data = await res.json();
-          const genres = data.data.genres.map(g => g.name);
-          await supabase.from('anime_list').update({ genres }).eq('id', anime.id);
+          const info = data.data;
+          await supabase.from('anime_list').update({ 
+            genres: info.genres.map(g => g.name),
+            mal_score: info.score,
+            studio: info.studios[0]?.name || 'Desconocido'
+          }).eq('id', anime.id);
         } catch (e) { console.error(e); }
       });
     }
     queryClient.invalidateQueries(['animeList']);
-    toast.success("ADN Otaku actualizado");
+    toast.success("Análisis profundo finalizado");
   };
 
+  // 8. SINCRONIZAR TEMPORADA
   const syncSeason = async () => {
     const promise = async () => {
       const res = await fetch('https://api.jikan.moe/v4/seasons/now');
@@ -180,53 +171,29 @@ export function useAnimeLibrary() {
       await supabase.from('season_cache').upsert(formatted);
       queryClient.invalidateQueries(['seasonCache']);
     };
-    toast.promise(promise(), {
-      loading: 'Descargando temporada actual...',
-      success: 'Catálogo de temporada listo',
-      error: 'Error de Jikan API'
-    });
+    toast.promise(promise(), { loading: 'Descargando temporada...', success: 'Catálogo listo', error: 'Error de API' });
   };
 
-const updateSmartStatus = async (anime) => {
-  const isLastEpisode = anime.total_episodes > 0 && anime.episodes_watched >= anime.total_episodes;
-
-  if (isLastEpisode) {
-    try {
-      toast.info("Comprobando si hay secuelas...");
-      const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.mal_id}/relations`);
-      const data = await res.json();
-      
-      // Buscamos si existe alguna relación que sea "Sequel"
-      const hasSequel = data.data?.some(rel => rel.relation === "Sequel");
-
-      const finalStatus = hasSequel ? 'on_hold' : 'completed';
-      const message = hasSequel 
-        ? "¡Secuela encontrada! Movido a 'En Espera'" 
-        : "Historia finalizada. Movido a 'Completados'";
-      
-      toast.success(message);
-      return finalStatus;
-    } catch (e) {
-      return 'completed'; // Fallback por si falla la API
+  // 9. DETECTOR DE SECUELAS
+  const updateSmartStatus = async (anime) => {
+    const isLastEpisode = anime.total_episodes > 0 && anime.episodes_watched >= anime.total_episodes;
+    if (isLastEpisode) {
+      try {
+        const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.mal_id}/relations`);
+        const data = await res.json();
+        const hasSequel = data.data?.some(rel => rel.relation === "Sequel");
+        return hasSequel ? 'on_hold' : 'completed';
+      } catch (e) { return 'completed'; }
     }
-  }
-  
-  // Si no es el último episodio pero ya vio al menos uno
-  if (anime.episodes_watched > 0) return 'watching';
-  
-  return anime.status;
-};
+    return anime.episodes_watched > 0 ? 'watching' : anime.status;
+  };
 
   return { 
-    myList, 
-    seasonData, 
-    isLoading, 
-    addToLibrary, // <-- Exportamos la nueva función
-    deleteAnime: deleteMutation.mutate, 
-    importFromMAL, 
-    repairADN, 
-    syncSeason,
-    updateSmartStatus, 
+    myList, seasonData, history, isLoading, addToLibrary, repairADN, importFromMAL, syncSeason, updateSmartStatus,
+    deleteAnime: (id) => supabase.from('anime_list').delete().eq('id', id).then(() => {
+        queryClient.invalidateQueries(['animeList']);
+        toast.success("Eliminado");
+    }),
     upsertAnime: upsertMutation.mutate
   };
 }
