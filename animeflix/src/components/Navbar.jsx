@@ -47,8 +47,11 @@ export function Navbar({ onSearchSelect, onRandomClick, syncSeason }) {
           <Link to="/" className={`text-[11px] font-black uppercase transition-colors ${location.pathname === '/' ? 'text-white' : 'text-gray-500 hover:text-white'}`}>Inicio</Link>
           <Link to="/stats" className={`text-[11px] font-black uppercase transition-colors ${location.pathname === '/stats' ? 'text-white' : 'text-gray-500 hover:text-white'}`}>Estadísticas</Link>
           <Link to="/tier-list" className={`text-[11px] font-black uppercase transition-colors ${location.pathname === '/tier-list' ? 'text-white' : 'text-gray-500 hover:text-white'}`}>Tier List</Link>
+          <Link to="/ranking-history" className={`text-[11px] font-black uppercase tracking-widest transition-colors ${location.pathname === '/ranking-history' ? 'text-white' : 'text-gray-500 hover:text-white'}`}>Evolución</Link>
+          <Link to="/achievements" className={`text-[11px] font-black uppercase tracking-widest transition-colors ${location.pathname === '/achievements' ? 'text-white' : 'text-gray-500 hover:text-white'}`}>Logros</Link>
           <Link to="/calendar" className={`text-[11px] font-black uppercase tracking-widest transition-colors ${location.pathname === '/calendar' ? 'text-white' : 'text-gray-500 hover:text-white'}`}>Calendario</Link>
           <Link to="/wrapped" className={`text-[11px] font-black uppercase transition-colors flex items-center gap-2 ${location.pathname === '/wrapped' ? 'text-netflix-red' : 'text-gray-500 hover:text-white'}`}><Sparkles size={14}/> Wrapped</Link>
+          
         </div>
       </div>
 

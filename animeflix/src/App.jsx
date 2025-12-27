@@ -12,6 +12,8 @@ import { TierList } from './pages/TierList';
 import { Wrapped } from './pages/Wrapped';
 import { MALCallback } from './pages/MALCallback';
 import { FullCalendar } from './pages/FullCalendar';
+import { Achievements } from './pages/Achievements';
+import { RankingHistory } from './pages/RankingHistory';
 
 function App() {
   const { myList, isLoading, syncSeason } = useAnimeLibrary();
@@ -81,6 +83,8 @@ function App() {
           <Route path="/wrapped" element={<Wrapped />} />
           <Route path="/mal-callback" element={<MALCallback />} />
           <Route path="/calendar" element={<FullCalendar />} />
+          <Route path="/achievements" element={<Achievements />} />
+          <Route path="/ranking-history" element={<RankingHistory />} />
         </Routes>
       </div>
 

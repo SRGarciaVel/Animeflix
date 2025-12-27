@@ -18,6 +18,7 @@ export function CommandPalette({ isOpen, onClose, onRandom }) {
     { icon: <Trophy size={18}/>, label: 'Tier List Personal', action: () => navigate('/tier-list') },
     { icon: <Dices size={18}/>, label: 'Anime Aleatorio', action: onRandom },
     { icon: <Sparkles size={18}/>, label: 'Ver mi Wrapped del Año', action: () => navigate('/wrapped') },
+    { icon: <Award size={18}/>, label: 'Ver Galería de Logros', action: () => navigate('/achievements') },
   ];
 
   const filteredCommands = commands.filter(c => 
