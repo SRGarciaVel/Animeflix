@@ -19,6 +19,7 @@
     "canvas-confetti": "^1.9.4",
     "downloadjs": "^1.4.7",
     "fast-average-color": "^9.5.0",
+    "framer-motion": "^12.23.26",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.562.0",
     "p-queue": "^9.0.1",
