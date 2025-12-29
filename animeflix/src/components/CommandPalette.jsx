@@ -17,8 +17,9 @@ export function CommandPalette({ isOpen, onClose, onRandom }) {
     { icon: <BarChart2 size={18}/>, label: 'Ver Estadísticas', action: () => navigate('/stats') },
     { icon: <Trophy size={18}/>, label: 'Tier List Personal', action: () => navigate('/tier-list') },
     { icon: <Dices size={18}/>, label: 'Anime Aleatorio', action: onRandom },
-    { icon: <Sparkles size={18}/>, label: 'Ver mi Wrapped del Año', action: () => navigate('/wrapped') },
     { icon: <Award size={18}/>, label: 'Ver Galería de Logros', action: () => navigate('/achievements') },
+    { icon: <Newspaper size={18}/>, label: 'Ver Noticias de Anime', action: () => navigate('/news') },
+    { icon: <Sparkles size={18}/>, label: 'Ver mi Wrapped del Año', action: () => navigate('/wrapped') },
   ];
 
   const filteredCommands = commands.filter(c => 

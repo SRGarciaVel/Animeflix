@@ -14,6 +14,8 @@ import { MALCallback } from './pages/MALCallback';
 import { FullCalendar } from './pages/FullCalendar';
 import { Achievements } from './pages/Achievements';
 import { RankingHistory } from './pages/RankingHistory';
+import { Diary } from './pages/Diary';
+import { News } from './pages/News';
 
 function App() {
   const { myList, isLoading, syncSeason } = useAnimeLibrary();
@@ -85,6 +87,8 @@ function App() {
           <Route path="/calendar" element={<FullCalendar />} />
           <Route path="/achievements" element={<Achievements />} />
           <Route path="/ranking-history" element={<RankingHistory />} />
+          <Route path="/diary" element={<Diary />} />
+          <Route path="/news" element={<News />} />
         </Routes>
       </div>
 
