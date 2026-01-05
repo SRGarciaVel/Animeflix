@@ -19,6 +19,7 @@ import { News } from './pages/News';
 import { Auth } from './pages/Auth';
 import { NotFound } from './pages/NotFound';
 import { supabase } from './supabaseClient';
+import { GlobalChat } from './components/GlobalChat';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -91,6 +92,11 @@ function App() {
         syncSeason={syncSeason}
         user={session?.user}
       />
+
+      {/* 🗨️ CHAT GLOBAL (Solo si hay usuario) */}
+      {session?.user && (
+        <GlobalChat user={session.user} />
+      )}
 
       <div className="pt-28 px-6 md:px-12 relative z-10">
         <Routes>
