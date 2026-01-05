@@ -28,7 +28,8 @@ export function MALCallback() {
       grant_type: 'authorization_code',
       code: code,
       code_verifier: verifier,
-      redirect_uri: 'http://localhost:5173/mal-callback'
+      redirect_uri: 'http://localhost:5173/mal-callback',
+      //redirect_uri: 'https://tu-nombre-de-app.vercel.app/mal-callback';
     });
 
     try {

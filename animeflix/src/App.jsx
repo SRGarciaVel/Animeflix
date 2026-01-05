@@ -17,6 +17,7 @@ import { RankingHistory } from './pages/RankingHistory';
 import { Diary } from './pages/Diary';
 import { News } from './pages/News';
 import { Auth } from './pages/Auth';
+import { NotFound } from './pages/NotFound';
 import { supabase } from './supabaseClient';
 
 function App() {
@@ -106,6 +107,7 @@ function App() {
           <Route path="/ranking-history" element={session ? <RankingHistory /> : <Navigate to="/auth" />} />
           <Route path="/diary" element={session ? <Diary /> : <Navigate to="/auth" />} />
           <Route path="/news" element={<News />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
 

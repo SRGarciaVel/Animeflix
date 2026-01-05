@@ -4,15 +4,18 @@ import { supabase } from '../supabaseClient';
 import PQueue from 'p-queue';
 import { toast } from 'sonner';
 
+// Configuración de cola para Jikan (evitar error 429 - 1 petición cada 1.3s)
 const queue = new PQueue({ concurrency: 1, interval: 1300, intervalCap: 1 });
+
 const STATUS_MAP = { 1: 'watching', 2: 'completed', 3: 'on_hold', 4: 'dropped', 6: 'plan_to_watch' };
 const MAL_STATUS_MAP = { 'watching': 'watching', 'completed': 'completed', 'on_hold': 'on_hold', 'dropped': 'dropped', 'plan_to_watch': 'plan_to_watch' };
 
 export function useAnimeLibrary() {
   const queryClient = useQueryClient();
   const [isSyncing, setIsSyncing] = useState(false);
+  const [repairProgress, setRepairProgress] = useState(0); // 📊 Estado para la barra de la Navbar
 
-  // 1. Obtener lista personal (Filtrada por RLS)
+  // 1. OBTENER LISTA PERSONAL (RLS filtra automáticamente por usuario)
   const { data: myList = [], isLoading } = useQuery({
     queryKey: ['animeList'],
     queryFn: async () => {
@@ -22,7 +25,7 @@ export function useAnimeLibrary() {
     }
   });
 
-  // 2. Obtener sesión de MAL
+  // 2. OBTENER SESIÓN DE MAL (Token del usuario actual)
   const { data: malSession } = useQuery({
     queryKey: ['malSession'],
     queryFn: async () => {
@@ -31,7 +34,11 @@ export function useAnimeLibrary() {
     }
   });
 
-  // 3. Obtener Historiales
+  // 3. OBTENER HISTORIALES Y CACHÉ
+  const { data: seasonData = [] } = useQuery({ queryKey: ['seasonCache'], queryFn: async () => {
+    const { data } = await supabase.from('season_cache').select('*'); return data || [];
+  }});
+
   const { data: history = [] } = useQuery({ queryKey: ['animeHistory'], queryFn: async () => {
     const { data } = await supabase.from('anime_history').select('*').order('created_at', { ascending: false }).limit(30);
     return data || [];
@@ -42,11 +49,7 @@ export function useAnimeLibrary() {
     return data || [];
   }});
 
-  const { data: seasonData = [] } = useQuery({ queryKey: ['seasonCache'], queryFn: async () => {
-    const { data } = await supabase.from('season_cache').select('*'); return data || [];
-  }});
-
-  // UTILIDAD: Extraer ID de Youtube
+  // UTILIDAD: Extracción de ID de Youtube
   const extractYTId = (trailer) => {
     if (!trailer) return null;
     if (trailer.youtube_id) return trailer.youtube_id;
@@ -61,7 +64,7 @@ export function useAnimeLibrary() {
   const upsertMutation = useMutation({
     mutationFn: async (animeData) => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Inicia sesión primero");
+      if (!user) throw new Error("Sesión expirada");
 
       const cleanData = {
         id: animeData.id,
@@ -74,10 +77,10 @@ export function useAnimeLibrary() {
         episodes_watched: Number(animeData.episodes_watched) || 0,
         score: Number(animeData.score) || 0,
         genres: animeData.genres || [],
-        mal_score: animeData.mal_score || 0,
+        mal_score: Number(animeData.mal_score) || 0,
         studio: animeData.studio || 'Desconocido',
         notes: animeData.notes || '',
-        rewatch_count: animeData.rewatch_count || 0,
+        rewatch_count: Number(animeData.rewatch_count) || 0,
         tier: animeData.tier || 'Unranked',
         youtube_id: animeData.youtube_id || null,
         broadcast: animeData.broadcast || null,
@@ -113,7 +116,7 @@ export function useAnimeLibrary() {
           method: 'PUT',
           headers: { 'Authorization': `Bearer ${malSession.access_token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
           body: body
-        });
+        }).catch(e => console.error("MAL Sync fail", e));
       }
     },
     onSuccess: () => {
@@ -146,7 +149,7 @@ export function useAnimeLibrary() {
           broadcast: item.node.broadcast || null
         }));
       } else {
-        const username = prompt("Usuario MAL:");
+        const username = prompt("Usuario MAL público:", "_-ackerman");
         if (!username) throw new Error("Cancelado");
         const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(`https://myanimelist.net/animelist/${username}/load.json?status=7`)}`);
         const json = await res.json();
@@ -163,40 +166,135 @@ export function useAnimeLibrary() {
       queryClient.invalidateQueries(['animeList']);
       return dataToSave.length;
     };
-    toast.promise(promise(), { loading: 'Sincronizando...', success: (len) => `${len} animes sincronizados`, error: 'Error' });
+    toast.promise(promise(), { loading: 'Sincronizando biblioteca...', success: (len) => `Sync completado: ${len} animes`, error: 'Error de red' });
     setIsSyncing(false);
   };
 
+  // --- 🛠️ REPARAR ADN CON PROGRESO GRÁFICO (Punto pedido) ---
   const repairADN = useMutation({
     mutationFn: async () => {
       const { data: { user } } = await supabase.auth.getUser();
       const broken = myList.filter(a => !a.genres.length || !a.broadcast || !a.youtube_id);
+      
+      if (broken.length === 0) {
+        setRepairProgress(100);
+        setTimeout(() => setRepairProgress(0), 1000);
+        return;
+      }
+
+      setRepairProgress(1); // Inicia la barra visual
+      let processed = 0;
+
       for (const anime of broken) {
         await queue.add(async () => {
           try {
             const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.mal_id}/full`);
             const { data } = await res.json();
+            
             await supabase.from('anime_list').update({ 
-              genres: data.genres.map(g => g.name), mal_score: data.score, studio: data.studios[0]?.name || 'Desconocido',
-              youtube_id: extractYTId(data.trailer), broadcast: data.broadcast, aired_from: data.aired.from
+              genres: data.genres.map(g => g.name), 
+              mal_score: data.score, 
+              studio: data.studios[0]?.name || 'Desconocido',
+              youtube_id: extractYTId(data.trailer), 
+              broadcast: data.broadcast, 
+              aired_from: data.aired.from
             }).eq('mal_id', anime.mal_id).eq('user_id', user.id);
-          } catch (e) {}
+
+            processed++;
+            // Actualizamos el porcentaje real
+            setRepairProgress(Math.round((processed / broken.length) * 100));
+          } catch (e) { console.error("Error repairing item", e); }
         });
       }
     },
-    onSuccess: () => queryClient.invalidateQueries(['animeList'])
+    onSuccess: () => {
+      queryClient.invalidateQueries(['animeList']);
+      // Escondemos la barra poco después de terminar para efecto visual suave
+      setTimeout(() => setRepairProgress(0), 1500);
+    }
   });
 
+  // --- OTRAS FUNCIONALIDADES ---
+  const addToLibrary = async (animeOrId) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    let fullAnime;
+    const isIdOnly = typeof animeOrId === 'number' || typeof animeOrId === 'string';
+    const malId = isIdOnly ? animeOrId : (animeOrId.mal_id || animeOrId.entry?.mal_id);
+
+    if (myList.some(item => Number(item.mal_id) === Number(malId))) return toast.error("Ya está en tu lista");
+
+    try {
+      if (isIdOnly || !animeOrId.images) {
+        const res = await fetch(`https://api.jikan.moe/v4/anime/${malId}`);
+        const { data } = await res.json();
+        fullAnime = data;
+      } else { fullAnime = animeOrId.entry || animeOrId; }
+
+      upsertMutation.mutate({
+        ...fullAnime,
+        mal_id: fullAnime.mal_id,
+        title: fullAnime.title,
+        image_url: fullAnime.images?.jpg?.large_image_url || fullAnime.image_url,
+        total_episodes: fullAnime.episodes || 0,
+        status: 'plan_to_watch',
+        episodes_watched: 0,
+        score: 0,
+        genres: fullAnime.genres ? fullAnime.genres.map(g => typeof g === 'object' ? g.name : g) : [],
+        youtube_id: extractYTId(fullAnime.trailer),
+        broadcast: fullAnime.broadcast,
+        aired_from: fullAnime.aired?.from || null,
+        user_id: user.id
+      });
+    } catch (e) { console.error(e); }
+  };
+
+  const syncSeason = async () => {
+    const promise = async () => {
+      const res = await fetch('https://api.jikan.moe/v4/seasons/now');
+      const data = await res.json();
+      const formatted = data.data.map(a => ({
+        mal_id: a.mal_id, title: a.title, image_url: a.images.jpg.large_image_url, genres: a.genres.map(g => g.name), episodes: a.episodes || 0, broadcast: a.broadcast
+      }));
+      await supabase.from('season_cache').upsert(formatted);
+      queryClient.invalidateQueries(['seasonCache']);
+    };
+    toast.promise(promise(), { loading: 'Actualizando temporada...', success: 'Catálogo al día', error: 'Error API' });
+  };
+
+  const updateSmartStatus = async (anime) => {
+    const isLast = anime.total_episodes > 0 && anime.episodes_watched >= anime.total_episodes;
+    if (isLast) {
+      const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.mal_id}/relations`);
+      const data = await res.json();
+      return data.data?.some(rel => rel.relation === "Sequel") ? 'on_hold' : 'completed';
+    }
+    return anime.episodes_watched > 0 ? 'watching' : anime.status;
+  };
+
+  const checkForNewEpisodes = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const checkList = myList.filter(a => a.status === 'on_hold' || a.status === 'watching');
+    if (checkList.length === 0) return;
+    toast.info("Buscando capítulos nuevos...");
+    for (const anime of checkList) {
+      await queue.add(async () => {
+        try {
+          const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.mal_id}`);
+          const { data } = await res.json();
+          if (data.episodes > anime.total_episodes) {
+            await supabase.from('anime_list').update({ total_episodes: data.episodes, updated_at: new Date().toISOString() }).eq('id', anime.id).eq('user_id', user.id);
+          }
+        } catch (e) { console.error(e); }
+      });
+    }
+    queryClient.invalidateQueries(['animeList']);
+  };
+
   return { 
-    myList, seasonData, history, tierHistory, isLoading, malSession, isSyncing,
+    myList, seasonData, history, tierHistory, isLoading, malSession, isSyncing, repairProgress,
     importFromMAL, repairADN: repairADN.mutate, isRepairing: repairADN.isPending,
-    upsertAnime: upsertMutation.mutate, extractYTId,
-    addToLibrary: async (a) => upsertMutation.mutate(a),
-    updateSmartStatus: async (a) => {
-        const res = await fetch(`https://api.jikan.moe/v4/anime/${a.mal_id}/relations`);
-        const data = await res.json();
-        return data.data?.some(rel => rel.relation === "Sequel") ? 'on_hold' : 'completed';
-    },
+    upsertAnime: upsertMutation.mutate, extractYTId, addToLibrary, syncSeason, updateSmartStatus, checkForNewEpisodes,
+    exportBackup: () => {/* lógica export */}, importBackup: (e) => {/* lógica import */},
     deleteAnime: (id) => supabase.from('anime_list').delete().eq('id', id).then(() => queryClient.invalidateQueries(['animeList']))
   };
 }
