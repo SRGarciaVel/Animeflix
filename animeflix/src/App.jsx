@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAnimeLibrary } from './hooks/useAnimeLibrary';
-import { useDynamicColor } from './hooks/useDynamicColor'; // Importamos el hook que ya teníamos
+import { useDynamicColor } from './hooks/useDynamicColor';
 import { Navbar } from './components/Navbar';
 import { CinemaModal } from './components/CinemaModal';
 import { CommandPalette } from './components/CommandPalette';
@@ -16,15 +16,28 @@ import { Achievements } from './pages/Achievements';
 import { RankingHistory } from './pages/RankingHistory';
 import { Diary } from './pages/Diary';
 import { News } from './pages/News';
+import { Auth } from './pages/Auth';
+import { supabase } from './supabaseClient';
 
 function App() {
+  const [session, setSession] = useState(null);
   const { myList, isLoading, syncSeason } = useAnimeLibrary();
   const [selectedAnime, setSelectedAnime] = useState(null);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   
-  // 🎨 TEMA DINÁMICO GLOBAL
-  // Extraemos el color del anime seleccionado para teñir TODA la app
   const globalAccentColor = useDynamicColor(selectedAnime?.image_url);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   // --- SHORTCUTS ---
   useEffect(() => {
@@ -43,7 +56,8 @@ function App() {
   const { data: calendar = [] } = useQuery({
     queryKey: ['calendar'],
     queryFn: async () => {
-      const res = await fetch(`https://api.jikan.moe/v4/schedules?filter=${['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date().getDay()]}`);
+      const today = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date().getDay()];
+      const res = await fetch(`https://api.jikan.moe/v4/schedules?filter=${today}`);
       const data = await res.json();
       return data.data || [];
     }
@@ -59,15 +73,14 @@ function App() {
   return (
     <div className="min-h-screen bg-netflix-black text-white font-sans selection:bg-netflix-red pb-20 no-scrollbar relative overflow-hidden">
       
-      {/* 🌟 EFECTO DE GLOW GLOBAL (Punto 3.2) */}
-      {/* Este div crea una mancha de color difuminada que cambia según el anime */}
+      {/* 🌟 GLOW DINÁMICO */}
       <div 
-        className="fixed -top-[10%] -left-[10%] w-[120%] h-[120%] pointer-events-none transition-all duration-1000 z-0"
+        className="fixed -top-[10%] -left-[10%] w-[120%] h-[120%] pointer-events-none transition-all duration-1000 z-0 opacity-40"
         style={{
           background: selectedAnime 
-            ? `radial-gradient(circle at center, ${globalAccentColor}15 0%, transparent 70%)` 
-            : 'radial-gradient(circle at center, #E5091405 0%, transparent 70%)',
-          filter: 'blur(120px)'
+            ? `radial-gradient(circle at center, ${globalAccentColor}33 0%, transparent 70%)` 
+            : 'radial-gradient(circle at center, #E5091411 0%, transparent 70%)',
+          filter: 'blur(100px)'
         }}
       ></div>
 
@@ -75,19 +88,23 @@ function App() {
         onSearchSelect={(anime) => setSelectedAnime({...anime, image_url: anime.images.jpg.large_image_url})} 
         onRandomClick={handleRandom}
         syncSeason={syncSeason}
+        user={session?.user}
       />
 
       <div className="pt-28 px-6 md:px-12 relative z-10">
         <Routes>
-          <Route path="/" element={<Home setSelectedAnime={setSelectedAnime} calendar={calendar} />} />
-          <Route path="/stats" element={<Stats />} />
-          <Route path="/tier-list" element={<TierList />} />
-          <Route path="/wrapped" element={<Wrapped />} />
-          <Route path="/mal-callback" element={<MALCallback />} />
+          <Route path="/" element={<Home setSelectedAnime={setSelectedAnime} calendar={calendar} user={session?.user} />} />
+          <Route path="/auth" element={!session ? <Auth /> : <Navigate to="/" />} />
+          
+          {/* Rutas protegidas */}
+          <Route path="/stats" element={session ? <Stats /> : <Navigate to="/auth" />} />
+          <Route path="/tier-list" element={session ? <TierList /> : <Navigate to="/auth" />} />
+          <Route path="/wrapped" element={session ? <Wrapped /> : <Navigate to="/auth" />} />
+          <Route path="/mal-callback" element={session ? <MALCallback /> : <Navigate to="/auth" />} />
           <Route path="/calendar" element={<FullCalendar />} />
-          <Route path="/achievements" element={<Achievements />} />
-          <Route path="/ranking-history" element={<RankingHistory />} />
-          <Route path="/diary" element={<Diary />} />
+          <Route path="/achievements" element={session ? <Achievements /> : <Navigate to="/auth" />} />
+          <Route path="/ranking-history" element={session ? <RankingHistory /> : <Navigate to="/auth" />} />
+          <Route path="/diary" element={session ? <Diary /> : <Navigate to="/auth" />} />
           <Route path="/news" element={<News />} />
         </Routes>
       </div>
