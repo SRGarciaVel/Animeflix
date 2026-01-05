@@ -28,9 +28,7 @@ export function MALCallback() {
       grant_type: 'authorization_code',
       code: code,
       code_verifier: verifier,
-      redirect_uri: window.location.hostname === 'localhost' 
-        ? 'http://localhost:5173/mal-callback' 
-        : `${window.location.origin}/mal-callback`
+      redirect_uri: `${window.location.origin}/mal-callback`
     });
 
     try {

@@ -3,9 +3,7 @@ import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
 const CLIENT_ID = import.meta.env.VITE_MAL_CLIENT_ID;
-const REDIRECT_URI = window.location.hostname === 'localhost' 
-  ? 'http://localhost:5173/mal-callback' 
-  : `${window.location.origin}/mal-callback`;
+const REDIRECT_URI = `${window.location.origin}/mal-callback`;
 
 export function useMALAuth() {
   const [isAuthenticating, setIsAuthenticating] = useState(false);

@@ -75,7 +75,7 @@ export function Navbar({ onSearchSelect, onRandomClick, syncSeason, user }) {
 
       <div className="flex items-center gap-10">
         <h1 className="text-3xl font-black text-netflix-red tracking-tighter cursor-pointer italic hover:scale-105 transition-transform" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-          ANIMEFLIX
+          ANILYZE
         </h1>
 
         {user && (
